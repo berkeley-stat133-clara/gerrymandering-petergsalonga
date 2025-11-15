@@ -5,24 +5,97 @@ format: typst
 
 ### Question 1
 
-Put your question here.
-
+Which precincts had the closest congressional race
 ### Answer 1
 
-Put your answer here.
+```{r}
+library(tidyverse)
 
+
+sov_2024 <- read_csv("data/g24_sov_by_g24_svprec.csv")
+
+precinct_votes <- sov_2024 |>
+    mutate(
+        CNGDEM01 = as.numeric(CNGDEM01),
+        CNGREP01 = as.numeric(CNGREP01)
+    ) |>
+    select(
+        COUNTY,
+        SVPREC_KEY,
+        CDDIST,
+        dem_votes = CNGDEM01,
+        rep_votes = CNGREP01
+    ) |>
+    mutate(
+        total_votes = dem_votes + rep_votes,
+        dem_share = dem_votes / total_votes
+    )
+
+# Here we compute how close each Congressional race was by taking the
+
+# absolute difference between Democratic and Republican votes. Smaller
+
+# values mean closer races.
+
+closest_precincts <- precinct_votes |>
+mutate(
+diff_congress = abs(dem_votes - rep_votes)
+) |>
+filter(total_votes > 0) |>
+arrange(diff_congress) |>
+select(SVPREC_KEY, COUNTY, CDDIST, dem_votes, rep_votes, diff_congress)
+
+closest_precincts
+# The top rows show the precincts where the Congressional vote totals were the closest.
+
+```
 ### Question 2
 
-Put your question here.
+What is the range of total votes per precinct in the 2024 election?
 
 ### Answer 2
 
-Put your answer here.
+```{r}
+# Here we summarize total precinct size using min, median, mean, and max.
+
+# This tells us how large or small precincts were in terms of turnout.
+
+precinct_size_stats <- precinct_votes |>
+summarize(
+min_votes = min(total_votes, na.rm = TRUE),
+median_votes = median(total_votes, na.rm = TRUE),
+mean_votes = mean(total_votes, na.rm = TRUE),
+max_votes = max(total_votes, na.rm = TRUE)
+)
+
+precinct_size_stats
+
+```
+
+This tells us the range of precinct sizes, smallest -> largest
 
 ### Question 3
 
-Put your question here.
+How many Congressional districts were won by Democrats vs Republicans?
 
 ### Answer 3
 
-Put your answer here.
+```{r}
+
+# First we aggregate votes to the district level by summing all precincts
+
+# within the same Congressional district. Then we identify which party won.
+
+district_votes <- precinct_votes |>
+group_by(CDDIST) |>
+summarize(
+dem_votes = sum(dem_votes, na.rm = TRUE),
+rep_votes = sum(rep_votes, na.rm = TRUE),
+total_votes = sum(total_votes, na.rm = TRUE)
+) |>
+mutate(
+winner = if_else(dem_votes > rep_votes, "DEM", "REP")
+)
+
+district_votes
+```

@@ -3,3 +3,244 @@ title: Data Cleaning
 format: typst
 ---
 
+```{r}
+library(tidyverse)
+
+sov_2024 <- read_csv("data/g24_sov_by_g24_svprec.csv") #Write into R Studio
+
+glimpse(sov_2024) #Take a look at it
+
+sum(duplicated(sov_2024$SVPREC_KEY)) #Check for uniqueness of each precinct
+sum(is.na(sov_2024$CDDIST)) #Check for precincts that dont have congressional District number
+
+sov_2024 <- sov_2024 %>% #Cleaning for columns of interest
+    mutate(
+    COUNTY = as.numeric(COUNTY),
+    FIPS   = as.numeric(FIPS),
+    CDDIST = as.numeric(CDDIST)
+    ) %>%
+    mutate(
+    CNGDEM01 = as.numeric(CNGDEM01),
+    CNGREP01 = as.numeric(CNGREP01)
+    )
+
+glimpse(sov_2024)
+
+# keep only the columns we need and create total votes + Democratic share
+
+precinct_votes <- sov_2024 %>%
+    select(
+    COUNTY,
+    SVPREC_KEY,
+    CDDIST,
+    dem_votes = CNGDEM01,
+    rep_votes = CNGREP01
+) %>%
+    mutate(
+    total_votes = dem_votes + rep_votes,
+    dem_share   = dem_votes / total_votes
+    )
+
+# quick check of the new precinct-level dataset
+
+glimpse(precinct_votes)
+
+# Question 1: compute basic turnout summaries across precincts
+
+# remove rows where total_votes is NA using base indexing
+
+precinct_turnout <- precinct_votes[!is.na(precinct_votes$total_votes), ]
+
+# number of precincts with valid turnout
+
+n_precincts <- nrow(precinct_turnout)
+
+# total votes across all precincts
+
+total_votes_all <- sum(precinct_turnout$total_votes, na.rm = TRUE)
+
+# average precinct turnout
+
+avg_votes <- mean(precinct_turnout$total_votes, na.rm = TRUE)
+
+# smallest and largest precinct turnout
+
+min_votes <- min(precinct_turnout$total_votes, na.rm = TRUE)
+max_votes <- max(precinct_turnout$total_votes, na.rm = TRUE)
+
+n_precincts
+total_votes_all
+avg_votes
+min_votes
+max_votes
+
+# Question 2: summarize Democratic vote share at the precinct level
+
+# keep rows with non-missing dem_share using base indexing
+
+precinct_share <- precinct_votes[!is.na(precinct_votes$dem_share), ]
+
+# center and spread of precinct-level Democratic vote share
+
+mean_dem_share_precinct   <- mean(precinct_share$dem_share, na.rm = TRUE)
+median_dem_share_precinct <- median(precinct_share$dem_share, na.rm = TRUE)
+min_dem_share_precinct    <- min(precinct_share$dem_share, na.rm = TRUE)
+max_dem_share_precinct    <- max(precinct_share$dem_share, na.rm = TRUE)
+
+mean_dem_share_precinct
+median_dem_share_precinct
+min_dem_share_precinct
+max_dem_share_precinct
+
+
+# classify precincts as Strong D, Strong R, or Mixed based on dem_share
+
+precinct_strength <- precinct_share |>
+    mutate(
+        category = if_else(
+        dem_share >= 0.6,
+        "Strong D",
+        if_else(
+        dem_share <= 0.4,
+        "Strong R",
+        "Mixed"
+        )
+    )
+) |>
+group_by(category) |>
+    summarize(
+    n = n()
+)
+
+precinct_strength
+
+# Question 3: aggregate precinct votes up to Congressional districts
+
+# drop rows with missing CDDIST using base indexing
+
+sov_non_missing_cd <- sov_2024[!is.na(sov_2024$CDDIST), ]
+
+# sum Democratic and Republican votes within each district
+
+district_votes <- sov_non_missing_cd |>
+    select(
+    CDDIST,
+    dem_votes = CNGDEM01,
+    rep_votes = CNGREP01
+    ) |>
+        mutate(
+        total_votes = dem_votes + rep_votes
+        ) |>
+            group_by(CDDIST) |>
+                summarize(
+                dem_votes = sum(dem_votes, na.rm = TRUE),
+                rep_votes = sum(rep_votes, na.rm = TRUE),
+                total_votes = sum(total_votes, na.rm = TRUE)
+                ) |>
+                    mutate(
+                    dem_share = dem_votes / total_votes,
+                        winner = if_else(
+                        dem_votes > rep_votes,
+                        "DEM",
+                        "REP"
+                        )
+                    )
+
+district_votes
+
+# count how many districts are won by each party
+
+district_wins <- district_votes |>
+group_by(winner) |>
+summarize(
+n_districts = n()
+)
+
+district_wins
+
+# summarize Democratic vote share at the district level
+
+mean_dem_share_district <- mean(district_votes$dem_share, na.rm = TRUE)
+median_dem_share_district <- median(district_votes$dem_share, na.rm = TRUE)
+min_dem_share_district <- min(district_votes$dem_share, na.rm = TRUE)
+max_dem_share_district <- max(district_votes$dem_share, na.rm = TRUE)
+
+mean_dem_share_district
+median_dem_share_district
+min_dem_share_district
+max_dem_share_district
+
+# save precinct- and district-level datasets for use in other .qmd files
+
+write_csv(precinct_votes, "data/precinct_votes_clean.csv")
+write_csv(district_votes, "data/district_votes_2024.csv")
+
+```
+
+###PART 5
+
+```{r}
+library(sf)
+library(tidyverse)
+
+g24_sr_precinct <- st_read("data/shapefiles/srprec_state_g24_v01_shp.shp")
+g24_proposed_congressional_map <- st_read("data/shapefiles/AB604.shp")
+
+g24_sov_precinct <- read_csv("data/g24_sov_by_g24_svprec.csv")
+
+sr_shp <- g24_sr_precinct |>
+    st_transform(3310) |>
+    st_set_precision(1) |>
+    st_make_valid() |>
+    st_collection_extract("POLYGON")
+
+proposed_map <- g24_proposed_congressional_map |>
+    st_transform(3310) |>
+    st_set_precision(1) |>
+    st_make_valid() |>
+    st_collection_extract("POLYGON")
+
+overlapping <- st_intersection(
+    sr_shp |>
+        select(SRPREC),
+    proposed_map |>
+        select(new_dist = DISTRICT)
+) |>
+    mutate(overlap_area = st_area(geometry)) |>
+    group_by(SRPREC) |>
+    mutate(prop_of_precinct = as.numeric(overlap_area / sum(overlap_area)))
+
+votes_precinct <- g24_sov_precinct |>
+    select(SVPREC, CNGDEM01, CNGREP01) |>
+    mutate(
+        CNGDEM01 = as.numeric(CNGDEM01),
+        CNGREP01 = as.numeric(CNGREP01)
+    ) |>
+    rename(
+        SRPREC = SVPREC,
+        d_votes = CNGDEM01,
+        r_votes = CNGREP01
+    )
+
+joined_precinct <- overlapping |>
+    left_join(votes_precinct, by = "SRPREC") |>
+    mutate(
+        d_votes_based_district = d_votes * prop_of_precinct,
+        r_votes_based_district = r_votes * prop_of_precinct
+    )
+
+final <- joined_precinct |>
+    group_by(new_dist) |>
+    summarize(
+        d_votes_total_dist = sum(d_votes_based_district, na.rm = TRUE),
+        r_votes_total_dist = sum(r_votes_based_district, na.rm = TRUE)
+    ) |>
+    mutate(
+        winner = if_else(d_votes_total_dist > r_votes_total_dist, "D", "R"),
+        total = d_votes_total_dist + r_votes_total_dist,
+        d_prop = d_votes_total_dist / total,
+        r_prop = r_votes_total_dist / total
+    )
+
+write_csv(final, "data/final.csv")
+

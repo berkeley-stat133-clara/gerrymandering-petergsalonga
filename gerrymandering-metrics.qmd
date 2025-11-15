@@ -3,9 +3,112 @@ title: Gerrymandering Metrics
 format: typst
 ---
 
-### 2024 Election Results and the 2024 District Map
+```{r}
+library(tidyverse)
+district_votes <- read_csv("data/district_votes_2024.csv")
+```
 
+
+### 2024 Election Results and the 2024 District Map
+```{r}
+library(tidyverse)
+
+precinct_votes <- read_csv("data/precinct_votes_clean.csv")
+
+gerry_2024 <- precinct_votes |>
+    group_by(CDDIST) |>
+    summarize(
+        dem_votes = sum(dem_votes, na.rm = TRUE),
+        rep_votes = sum(rep_votes, na.rm = TRUE)
+    ) |>
+    mutate(
+        total_votes = dem_votes + rep_votes,
+        dem_share = if_else(total_votes > 0, dem_votes / total_votes, NA),
+        rep_share = if_else(total_votes > 0, rep_votes / total_votes, NA),
+        winner = if_else(
+            dem_votes > rep_votes,
+            "DEM",
+            if_else(rep_votes > dem_votes, "REP", "TIE")
+        ),
+        d_wasted = if_else(
+            winner == "DEM",
+            dem_votes - 51,
+            dem_votes
+        ),
+        r_wasted = if_else(
+            winner == "REP",
+            rep_votes - 51,
+            rep_votes
+        )
+    )
+
+write_csv(gerry_2024, "data/gerrymandering_table_2024.csv")
+
+mean_median_2024 <- gerry_2024 |>
+    mutate(v_i = dem_share) |>
+    summarize(
+        mean_v = mean(v_i, na.rm = TRUE),
+        med_v = median(v_i, na.rm = TRUE)
+    ) |>
+    mutate(
+        mean_median = mean_v - med_v
+    )
+
+eg_2024 <- gerry_2024 |>
+    summarize(
+        total_d_wasted = sum(d_wasted, na.rm = TRUE),
+        total_r_wasted = sum(r_wasted, na.rm = TRUE),
+        total_votes = sum(total_votes, na.rm = TRUE)
+    ) |>
+    mutate(
+        efficiency_gap = (total_r_wasted - total_d_wasted) / total_votes
+    )
+
+mean_median_2024
+eg_2024
+
+
+#save this district-level table so we can reuse it in other parts
+
+write_csv(gerry_2024, "data/gerrymandering_table_2024.csv")
+```
 
 
 ### 2024 Election Results and the proposed 2025 District Map
 
+```{r}
+library(tidyverse)
+
+final <- read_csv("data/final.csv")
+
+mean_median_new <- final |>
+    summarize(
+        mean_dem = mean(d_prop, na.rm = TRUE),
+        median_dem = median(d_prop, na.rm = TRUE)
+    ) |>
+    mutate(
+        mean_median = mean_dem - median_dem
+    )
+
+final2 <- final |>
+    mutate(
+        d_wasted = if_else(
+            winner == "D",
+            d_votes_total_dist - 51,
+            d_votes_total_dist
+        ),
+        r_wasted = if_else(
+            winner == "R",
+            r_votes_total_dist - 51,
+            r_votes_total_dist
+        )
+    )
+
+total_d_wasted <- sum(final2$d_wasted, na.rm = TRUE)
+total_r_wasted <- sum(final2$r_wasted, na.rm = TRUE)
+total_votes <- sum(final2$total, na.rm = TRUE)
+
+new_eg_value <- (total_r_wasted - total_d_wasted) / total_votes
+
+mean_median_new
+new_eg_value
